@@ -1288,9 +1288,16 @@ SFEN形式の例: 7nl/1R3sk2/5pppp/9/9/9/9/9/9 b GS 1
       m.piece === move.piece && m.promote === move.promote
     );
 
+    const isAlreadyOffSolution = Boolean(
+      moveHistory.length > 0 &&
+      currentProblem?.solution &&
+      currentProblem.solution.length > 0 &&
+      !matchesMoveHistory(currentProblem.solution, moveHistory)
+    );
+
     if (!isLegal) {
       setMessage('その手は指せません（反則手です）。');
-      setTimeout(() => setMessage(isGoteManualEntry ? '後手の手を入力してください。' : `あなたの番（${moveHistory.length + 1}手目）です。`), 1500);
+      setTimeout(() => setMessage(isGoteManualEntry ? '後手の手を入力してください。' : isAlreadyOffSolution ? '解答手順をはずれました' : `あなたの番（${moveHistory.length + 1}手目）です。`), 1500);
       return;
     }
 
@@ -1304,7 +1311,7 @@ SFEN形式の例: 7nl/1R3sk2/5pppp/9/9/9/9/9/9 b GS 1
       if (oppMoves.length === 0) {
         shogi.initializeFromSFENString(sfenBefore);
         setMessage('打ち歩詰めは禁手です。');
-        setTimeout(() => setMessage(isGoteManualEntry ? '後手の手を入力してください。' : `あなたの番（${moveHistory.length + 1}手目）です。`), 2000);
+        setTimeout(() => setMessage(isGoteManualEntry ? '後手の手を入力してください。' : isAlreadyOffSolution ? '解答手順をはずれました' : `あなたの番（${moveHistory.length + 1}手目）です。`), 2000);
         return;
       }
     }
@@ -1327,6 +1334,9 @@ SFEN形式の例: 7nl/1R3sk2/5pppp/9/9/9/9/9/9 b GS 1
     
     const nextShogi = cloneShogi(shogi);
     setShogi(nextShogi);
+
+    const hasRegisteredSolution = Boolean(currentProblem?.solution && currentProblem.solution.length > 0);
+    const isSolutionMatch = Boolean(hasRegisteredSolution && matchesMoveHistory(currentProblem!.solution!, currentSenteHistory));
 
     const oppMoves = getLegalMoves(nextShogi, opponentColor);
     if (oppMoves.length === 0) {
@@ -1359,17 +1369,14 @@ SFEN形式の例: 7nl/1R3sk2/5pppp/9/9/9/9/9/9 b GS 1
     if (isGoteManualEntry) {
        setPreferredAiMovesMap(prev => ({ ...prev, [sfenBefore]: move }));
        setIsGoteManualEntry(false);
-       setMessage(`あなたの番（${currentSenteHistory.length + 1}手目）です。`);
+       setMessage(hasRegisteredSolution && !isSolutionMatch ? '解答手順をはずれました' : `あなたの番（${currentSenteHistory.length + 1}手目）です。`);
        return;
     }
 
-    setMessage('相手が考えています...');
+    setMessage(hasRegisteredSolution && !isSolutionMatch ? '解答手順をはずれました' : '相手が考えています...');
 
     const senteIndex = currentSenteHistory.length - 1;
     const goteIndex = senteIndex + 1;
-
-    // 1. Check Main Solution
-    const isSolutionMatch = currentProblem?.solution && matchesMoveHistory(currentProblem.solution, currentSenteHistory);
     
     // 2. Check Registered Non-Solution Branches
     let matchingBranch: BranchSequence | null = null;
@@ -1384,8 +1391,6 @@ SFEN形式の例: 7nl/1R3sk2/5pppp/9/9/9/9/9/9 b GS 1
 
     let solutionGoteMove: Move | null = null;
     let isBranchMove = false;
-    let branchName = '';
-    let isBranchEndNonSolution = false;
 
     if (isSolutionMatch && currentProblem?.solution) {
       if (goteIndex < currentProblem.solution.length) {
@@ -1393,21 +1398,12 @@ SFEN形式の例: 7nl/1R3sk2/5pppp/9/9/9/9/9/9 b GS 1
       }
     } else if (matchingBranch) {
       isBranchMove = true;
-      branchName = matchingBranch.name || '変化手順';
       if (goteIndex < matchingBranch.moves.length) {
         solutionGoteMove = matchingBranch.moves[goteIndex];
-      } else {
-        isBranchEndNonSolution = true;
       }
     }
     
     setTimeout(() => {
-      if (isBranchEndNonSolution) {
-        setIsGameOver(true);
-        setMessage(`不正解です（詰みません）。登録された変化手順「${branchName}」です。`);
-        return;
-      }
-
       let goteMoveToPlay: Move | null = null;
 
       if (solutionGoteMove) {
@@ -1418,7 +1414,7 @@ SFEN形式の例: 7nl/1R3sk2/5pppp/9/9/9/9/9/9 b GS 1
         }
       }
 
-      if (!goteMoveToPlay && !isSolutionMatch && !isBranchMove) {
+      if (!goteMoveToPlay) {
         const defenderRes = findBestDefenderMove(nextShogi, 3, solvedAiMovesMap, preferredAiMovesMap);
         goteMoveToPlay = defenderRes.bestMove;
       }
@@ -1435,7 +1431,9 @@ SFEN形式の例: 7nl/1R3sk2/5pppp/9/9/9/9/9/9 b GS 1
           setMessage('指す手がありません。失敗です。');
         } else {
           const nextMoveCount = currentSenteHistory.length + 2;
-          if (isBranchMove) {
+          if (hasRegisteredSolution && !isSolutionMatch) {
+            setMessage('解答手順をはずれました');
+          } else if (isBranchMove) {
             setMessage(`あなたの番（${nextMoveCount}手目）です。（不詰みの手順です）`);
           } else {
             setMessage(`あなたの番（${nextMoveCount}手目）です。`);
@@ -1443,33 +1441,25 @@ SFEN形式の例: 7nl/1R3sk2/5pppp/9/9/9/9/9/9 b GS 1
         }
         setShogi(cloneShogi(nextShogi));
       } else {
-        if (isBranchMove) {
-          setIsGameOver(true);
-          setMessage(`不正解です（詰みません）。登録された変化手順「${branchName}」です。`);
-        } else if (isSolutionMatch || !currentProblem?.solution || currentProblem.solution.length === 0) {
-          setIsGameOver(true);
-          setMessage('CORRECT');
-          setPreferredAiMovesMap({});
-          setSolvedProblems(prev => Array.from(new Set([...prev, currentProblem.id])));
-          setSolvedAiMovesMap(prev => {
-            const newMap = { ...prev };
-            for (let i = 1; i < currentSenteHistory.length; i += 2) {
-              const sfen = sfenHistory[i];
-              if (sfen) newMap[sfen] = [...(newMap[sfen] || []), currentSenteHistory[i]];
-            }
-            return newMap;
-          });
-          setShowCorrectSplash(true);
-          setTimeout(() => setShowCorrectSplash(false), 1000);
-          confetti({
-            particleCount: 150,
-            spread: 70,
-            origin: { y: 0.6 }
-          });
-        } else {
-          setIsGameOver(true);
-          setMessage('不正解です。（登録された正解手順と異なります）');
-        }
+        setIsGameOver(true);
+        setMessage('CORRECT');
+        setPreferredAiMovesMap({});
+        setSolvedProblems(prev => Array.from(new Set([...prev, currentProblem.id])));
+        setSolvedAiMovesMap(prev => {
+          const newMap = { ...prev };
+          for (let i = 1; i < currentSenteHistory.length; i += 2) {
+            const sfen = sfenHistory[i];
+            if (sfen) newMap[sfen] = [...(newMap[sfen] || []), currentSenteHistory[i]];
+          }
+          return newMap;
+        });
+        setShowCorrectSplash(true);
+        setTimeout(() => setShowCorrectSplash(false), 1000);
+        confetti({
+          particleCount: 150,
+          spread: 70,
+          origin: { y: 0.6 }
+        });
       }
     }, 50);
   };
